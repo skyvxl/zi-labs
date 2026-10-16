@@ -149,7 +149,7 @@ func (ui *UI) ShowLogin() {
 	ui.loginPassword.OnSubmitted = func(string) { ui.loginSubmit.OnTapped() }
 	form := widget.NewForm(widget.NewFormItem("Имя", ui.loginName), widget.NewFormItem("Пароль", ui.loginPassword))
 	actions := container.NewHBox(layout.NewSpacer(), widget.NewButton("Завершить работу", ui.finish), ui.loginSubmit)
-	body := container.NewVBox(wrapLabel("При первом входе введите имя ADMIN и оставьте пароль пустым. Затем установите свой пароль."), form, ui.message, actions)
+	body := container.NewVBox(form, ui.message, actions)
 	ui.frame("Вход в программу", "Введите имя и пароль зарегистрированного пользователя.", container.NewBorder(body, nil, nil, nil, layout.NewSpacer()))
 	ui.window.Canvas().Focus(ui.loginName)
 }
@@ -161,11 +161,21 @@ func (ui *UI) showSetup() {
 		return
 	}
 	requiredChange := ui.service.State() == StatePasswordChange
+	ui.oldPassword = nil
+	if requiredChange {
+		ui.oldPassword = NewMaskedEntry()
+	}
 	ui.setupPassword = NewMaskedEntry()
 	ui.setupConfirm = NewMaskedEntry()
 	ui.message = messageLabel()
 	ui.setupSubmit = widget.NewButton("Установить пароль", func() {
-		err := ui.service.SetInitialPassword(ui.setupPassword.Value(), ui.setupConfirm.Value())
+		var err error
+		if requiredChange {
+			err = ui.service.ChangePassword(ui.oldPassword.Value(), ui.setupPassword.Value(), ui.setupConfirm.Value())
+			ui.oldPassword.Clear()
+		} else {
+			err = ui.service.SetInitialPassword(ui.setupPassword.Value(), ui.setupConfirm.Value())
+		}
 		ui.setupPassword.Clear()
 		ui.setupConfirm.Clear()
 		if err != nil {
@@ -183,7 +193,12 @@ func (ui *UI) showSetup() {
 	if user.RestrictionsEnabled {
 		hint = PolicyHint
 	}
-	form := widget.NewForm(widget.NewFormItem("Новый пароль", ui.setupPassword), widget.NewFormItem("Подтверждение", ui.setupConfirm))
+	form := widget.NewForm()
+	if requiredChange {
+		form.Append("Старый пароль", ui.oldPassword)
+	}
+	form.Append("Новый пароль", ui.setupPassword)
+	form.Append("Подтверждение", ui.setupConfirm)
 	body := container.NewVBox(wrapLabel(hint), form, ui.message, container.NewHBox(layout.NewSpacer(), widget.NewButton("Завершить работу", ui.finish), ui.setupSubmit))
 	title := "Первоначальная установка пароля"
 	subtitle := "Учётная запись: " + user.Username + ". Установите пароль и повторите его."
@@ -193,7 +208,11 @@ func (ui *UI) showSetup() {
 		ui.setupSubmit.SetText("Сохранить пароль")
 	}
 	ui.frame(title, subtitle, container.NewBorder(body, nil, nil, nil, layout.NewSpacer()))
-	ui.window.Canvas().Focus(ui.setupPassword)
+	if requiredChange {
+		ui.window.Canvas().Focus(ui.oldPassword)
+	} else {
+		ui.window.Canvas().Focus(ui.setupPassword)
+	}
 }
 
 func (ui *UI) showHome() {

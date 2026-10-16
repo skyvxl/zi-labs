@@ -146,10 +146,10 @@ func TestServiceAdminAndRestrictionWorkflow(t *testing.T) {
 	if s.State() != StatePasswordChange {
 		t.Fatal("mandatory change not required")
 	}
-	if err := s.SetInitialPassword("456", "456"); err == nil {
+	if err := s.ChangePassword("123", "456", "456"); err == nil {
 		t.Fatal("new restriction ignored")
 	}
-	if err := s.SetInitialPassword("mф%", "mф%"); err != nil {
+	if err := s.ChangePassword("123", "mф%", "mф%"); err != nil {
 		t.Fatal(err)
 	}
 	reopened := &Store{}

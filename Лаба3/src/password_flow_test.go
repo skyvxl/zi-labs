@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"image/png"
 	"os"
@@ -79,13 +80,13 @@ func TestEnabledPolicyForcesReplacementBeforeAccess(t *testing.T) {
 			if _, err := s.authorizedUser(); !errors.Is(err, ErrAccessDenied) {
 				t.Fatal("mandatory change grants normal access")
 			}
-			if err := s.SetInitialPassword("456", "456"); err == nil {
+			if err := s.ChangePassword("123", "456", "456"); err == nil {
 				t.Fatal("noncompliant replacement accepted")
 			}
-			if err := s.SetInitialPassword("aя+", "qЖ*"); err == nil {
+			if err := s.ChangePassword("123", "aя+", "qЖ*"); err == nil {
 				t.Fatal("confirmation ignored")
 			}
-			if err := s.SetInitialPassword("aя+", "aя+"); err != nil {
+			if err := s.ChangePassword("123", "aя+", "aя+"); err != nil {
 				t.Fatal(err)
 			}
 			if s.State() != StateGuest {
@@ -128,6 +129,19 @@ func TestUIForcedChangeReturnsToEmptyLogin(t *testing.T) {
 	if ui.setupPassword == nil || ui.service.State() == StateAuthenticated || !ui.changeItem.Disabled {
 		t.Fatal("mandatory change form missing")
 	}
+	if ui.oldPassword == nil {
+		t.Fatal("mandatory change has no old-password field")
+	}
+	test.Type(ui.oldPassword, "wrong")
+	test.Type(ui.setupPassword, "aя+")
+	test.Type(ui.setupConfirm, "aя+")
+	test.Tap(ui.setupSubmit)
+	if ui.service.State() != StatePasswordChange || ui.message.Text == "" {
+		t.Fatal("wrong old password bypassed mandatory change")
+	}
+	if ui.oldPassword.Value() != "" || ui.setupPassword.Value() != "" || ui.setupConfirm.Value() != "" {
+		t.Fatal("password fields were not cleared")
+	}
 	if dir := os.Getenv("LAB3_SCREENSHOTS"); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
@@ -143,6 +157,7 @@ func TestUIForcedChangeReturnsToEmptyLogin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	test.Type(ui.oldPassword, "123")
 	test.Type(ui.setupPassword, "aя+")
 	test.Type(ui.setupConfirm, "aя+")
 	test.Tap(ui.setupSubmit)
@@ -214,7 +229,7 @@ func TestRequiredPasswordFailedSaveKeepsChangePending(t *testing.T) {
 	}
 	path := s.store.storePath
 	s.store.storePath = t.TempDir()
-	if err := s.SetInitialPassword("aя+", "aя+"); err == nil {
+	if err := s.ChangePassword("123", "aя+", "aя+"); err == nil {
 		t.Fatal("failed save reported success")
 	}
 	if s.State() != StatePasswordChange {
@@ -225,10 +240,56 @@ func TestRequiredPasswordFailedSaveKeepsChangePending(t *testing.T) {
 		t.Fatal("failed save changed password")
 	}
 	s.store.storePath = path
-	if err := s.SetInitialPassword("aя+", "aя+"); err != nil {
+	if err := s.ChangePassword("123", "aя+", "aя+"); err != nil {
 		t.Fatal(err)
 	}
 	if s.State() != StateGuest {
 		t.Fatal("retry did not require fresh login")
+	}
+}
+
+func TestForcedChangeRequiresOldPassword(t *testing.T) {
+	s := newTestService(t)
+	hash, err := HashPassword("123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.AddUser(User{Username: "student", PasswordHash: hash, RestrictionsEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Login("student", "123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetInitialPassword("aя+", "aя+"); !errors.Is(err, ErrAccessDenied) {
+		t.Fatal("mandatory change can bypass old-password verification")
+	}
+	before, err := os.ReadFile(s.store.storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, old := range []string{"", "wrong"} {
+		if err := s.ChangePassword(old, "aя+", "aя+"); err == nil {
+			t.Fatal("wrong old password accepted")
+		}
+		user, err := s.store.Get("student")
+		if err != nil || user.PasswordHash != hash || s.State() != StatePasswordChange {
+			t.Fatal("failed change modified account or state")
+		}
+		after, err := os.ReadFile(s.store.storePath)
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatal("failed change wrote to disk")
+		}
+	}
+	if s.Attempts() != 0 {
+		t.Fatal("change failure counted as login failure")
+	}
+	if err := s.ChangePassword("123", "aя+", "aя+"); err != nil {
+		t.Fatal(err)
+	}
+	if s.State() != StateGuest {
+		t.Fatal("change did not require fresh login")
+	}
+	if err := s.Login("student", "aя+"); err != nil || s.State() != StateAuthenticated {
+		t.Fatalf("fresh login: %v", err)
 	}
 }

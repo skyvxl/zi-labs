@@ -120,18 +120,17 @@ func validateNewPassword(user User, password, confirmation string) error {
 	return ValidatePolicy(user, password)
 }
 
-// SetInitialPassword also completes a mandatory replacement after a verified login.
 func (s *Service) SetInitialPassword(password, confirmation string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state != StateSetup && s.state != StatePasswordChange {
+	if s.state != StateSetup {
 		return ErrAccessDenied
 	}
 	user, err := s.current()
 	if err != nil {
 		return err
 	}
-	if s.state == StateSetup && user.PasswordHash != "" {
+	if user.PasswordHash != "" {
 		return errors.New("пароль уже установлен; войдите повторно")
 	}
 	if err := validateNewPassword(user, password, confirmation); err != nil {
@@ -152,9 +151,12 @@ func (s *Service) SetInitialPassword(password, confirmation string) error {
 func (s *Service) ChangePassword(old, password, confirmation string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	user, err := s.authorize(false)
+	user, err := s.current()
 	if err != nil {
 		return err
+	}
+	if s.state != StateAuthenticated && s.state != StatePasswordChange {
+		return ErrAccessDenied
 	}
 	correct, err := VerifyPassword(user.PasswordHash, old)
 	if err != nil {
